@@ -17,6 +17,7 @@
   input:focus { border-color: #444; }
   input::placeholder { color: #444; }
   .hint { font-size: 12px; color: #555; margin-top: 6px; }
+  .hint a { color: #4fc3f7; text-decoration: none; }
   button[type=submit] { width: 100%; padding: 16px; background: #fff; color: #000; border: none; border-radius: 10px; font-size: 15px; font-weight: 700; cursor: pointer; margin-top: 8px; transition: opacity 0.2s; }
   button[type=submit]:hover { opacity: 0.88; }
   .past-jobs { margin-top: 40px; padding-top: 32px; border-top: 1px solid #1e1e1e; }
@@ -34,29 +35,36 @@
   .badge-cancelled { background: #2a2a2a; color: #777; }
   a { color: #4fc3f7; text-decoration: none; }
   a:hover { text-decoration: underline; }
+  .cost-note { background: #111820; border: 1px solid #1a2a3a; border-radius: 8px; padding: 12px 16px; font-size: 12px; color: #4fc3f7; margin-top: 16px; }
 </style>
 </head>
 <body>
 <div class="card">
   <div class="logo">True Classic</div>
   <h1>Follower Scanner</h1>
-  <p class="subtitle">Find every Instagram account with 100k+ followers that follows @trueclassic. Powered by RocketAPI.</p>
+  <p class="subtitle">Find every Instagram account with 100k+ followers that follows a given account. Powered by Apify — $0.15 per 1,000 results.</p>
 
   <form action="/start" method="POST">
     <div class="field">
-      <label>RocketAPI Key</label>
-      <input type="text" name="api_key" placeholder="Token xxxxxxxxxxxxxxxx" value="{{ default_api_key }}" required>
-      <div class="hint">Get your key at <a href="https://rocketapi.io" target="_blank">rocketapi.io</a> — 7-day free trial</div>
+      <label>Apify API Token</label>
+      <input type="text" name="api_key" placeholder="apify_api_xxxxxxxxxxxx" value="{{ default_api_key }}" required>
+      <div class="hint">Get your token at <a href="https://console.apify.com/account/integrations" target="_blank">console.apify.com/account/integrations</a></div>
     </div>
     <div class="field">
       <label>Instagram Account</label>
       <input type="text" name="username" value="trueclassic" placeholder="trueclassic">
     </div>
     <div class="field">
-      <label>Minimum Followers</label>
+      <label>Minimum Followers to Qualify</label>
       <input type="number" name="min_followers" value="100000" min="1000">
     </div>
+    <div class="field">
+      <label>Max Followers to Scan</label>
+      <input type="number" name="results_limit" value="500000" min="1000">
+      <div class="hint">@trueclassic has ~1M followers. 500k = ~$75. Reduce to save cost.</div>
+    </div>
     <button type="submit">▶ Start Scan</button>
+    <div class="cost-note">💡 5,000 results free on new Apify accounts. After that: $0.15/1k results.</div>
   </form>
 
   {% if jobs %}

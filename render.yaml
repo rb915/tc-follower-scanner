@@ -7,7 +7,7 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.11
-      - key: ROCKETAPI_KEY
+      - key: APIFY_TOKEN
         sync: false
       - key: MIN_FOLLOWERS
         value: "100000"

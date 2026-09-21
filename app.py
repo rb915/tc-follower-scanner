@@ -10,175 +10,175 @@ import requests
 
 app = Flask(__name__)
 
-ROCKETAPI_KEY = os.environ.get("ROCKETAPI_KEY", "")
+APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "")
 MIN_FOLLOWERS = int(os.environ.get("MIN_FOLLOWERS", "100000"))
-TC_INSTAGRAM_USER_ID = "244687506"  # @trueclassic
+ACTOR_ID = "apify~instagram-follower-scraper"
 
-# In-memory job store (persists for process lifetime, enough for Render)
+# In-memory job store
 jobs = {}
 
-def get_user_id(username: str, api_key: str) -> str:
-    """Resolve Instagram username to user ID."""
-    resp = requests.post(
-        "https://v1.rocketapi.io/instagram/user/get_info",
-        headers={"Authorization": f"Token {api_key}"},
-        json={"username": username},
-        timeout=15
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    response = data.get("response", {})
-    if not isinstance(response, dict):
-        raise ValueError(f"Unexpected response: {str(response)[:200]}")
-    body = response.get("body", {})
-    if not isinstance(body, dict):
-        raise ValueError(f"Unexpected body: {str(body)[:200]}")
-    return str(body["data"]["user"]["id"])
 
-
-def scrape_followers(job_id: str, user_id: str, api_key: str, min_followers: int):
-    """Background thread: paginate through all followers, filter by min_followers."""
+def run_apify_scan(job_id: str, username: str, results_limit: int, min_followers: int, token: str):
+    """Start Apify actor run, poll until done, filter results."""
     job = jobs[job_id]
     job["status"] = "running"
     job["started_at"] = datetime.utcnow().isoformat()
-    job["results"] = []
-    job["total_scanned"] = 0
-    job["pages"] = 0
-    job["errors"] = 0
 
-    max_id = None
-    consecutive_errors = 0
+    try:
+        # Start the actor run
+        resp = requests.post(
+            f"https://api.apify.com/v2/acts/{ACTOR_ID}/runs",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={
+                "usernames": [username],
+                "resultsLimit": results_limit,
+                "getFollowers": True,
+                "getFollowing": False,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        run_data = resp.json()["data"]
+        run_id = run_data["id"]
+        dataset_id = run_data["defaultDatasetId"]
+        job["run_id"] = run_id
+        job["dataset_id"] = dataset_id
+        job["apify_url"] = f"https://console.apify.com/actors/runs/{run_id}"
 
+    except Exception as e:
+        job["status"] = "error"
+        job["error_message"] = f"Failed to start Apify run: {e}"
+        return
+
+    # Poll until complete
     while True:
         if job.get("cancelled"):
+            # Abort the Apify run
+            try:
+                requests.post(
+                    f"https://api.apify.com/v2/acts/{ACTOR_ID}/runs/{run_id}/abort",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=10,
+                )
+            except Exception:
+                pass
             job["status"] = "cancelled"
             return
 
-        payload = {"id": user_id, "count": 50}
-        if max_id:
-            payload["max_id"] = max_id
-
         try:
-            resp = requests.post(
-                "https://v1.rocketapi.io/instagram/user/get_followers",
-                headers={"Authorization": f"Token {api_key}"},
-                json=payload,
-                timeout=20
+            poll = requests.get(
+                f"https://api.apify.com/v2/acts/{ACTOR_ID}/runs/{run_id}",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=15,
             )
-            resp.raise_for_status()
-            data = resp.json()
-            consecutive_errors = 0
-        except Exception as e:
-            job["errors"] += 1
-            consecutive_errors += 1
-            try:
-                raw = resp.text[:300]
-            except Exception:
-                raw = "(no response)"
-            job["last_error"] = f"{e} | raw: {raw}"
-            if consecutive_errors >= 5:
+            poll.raise_for_status()
+            run_info = poll.json()["data"]
+            status = run_info["status"]
+            job["apify_status"] = status
+
+            # Update live stats from run stats
+            stats = run_info.get("stats", {})
+            job["total_scanned"] = stats.get("outputItemCount", 0)
+
+            if status == "SUCCEEDED":
+                break
+            elif status in ("FAILED", "ABORTED", "TIMED-OUT"):
                 job["status"] = "error"
-                job["error_message"] = f"Too many consecutive errors: {e}"
+                job["error_message"] = f"Apify run ended with status: {status}"
                 return
-            time.sleep(5)
-            continue
 
-        response = data.get("response", {})
-        if not isinstance(response, dict):
-            job["errors"] += 1
-            job["last_error"] = f"Unexpected response format: {str(response)[:200]}"
-            time.sleep(5)
-            continue
-        body = response.get("body", {})
-        if not isinstance(body, dict):
-            job["errors"] += 1
-            job["last_error"] = f"Unexpected body format: {str(body)[:200]}"
-            time.sleep(5)
-            continue
-        users = body.get("users", [])
-        if not isinstance(users, list):
-            users = []
+        except Exception as e:
+            job["errors"] = job.get("errors", 0) + 1
+            job["last_error"] = str(e)
 
-        if not users:
-            break
+        time.sleep(5)
 
-        job["pages"] += 1
-        job["total_scanned"] += len(users)
+    # Fetch results
+    try:
+        offset = 0
+        page_size = 1000
+        all_results = []
 
-        for u in users:
-            fc = u.get("follower_count", 0)
-            if fc >= min_followers:
-                job["results"].append({
-                    "username": u.get("username", ""),
-                    "full_name": u.get("full_name", ""),
-                    "follower_count": fc,
-                    "following_count": u.get("following_count", 0),
-                    "is_verified": u.get("is_verified", False),
-                    "is_private": u.get("is_private", False),
-                    "biography": u.get("biography", ""),
-                    "external_url": u.get("external_url", ""),
-                    "profile_url": f"https://instagram.com/{u.get('username', '')}",
-                })
+        while True:
+            r = requests.get(
+                f"https://api.apify.com/v2/datasets/{dataset_id}/items",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"format": "json", "limit": page_size, "offset": offset},
+                timeout=30,
+            )
+            r.raise_for_status()
+            items = r.json()
+            if not items:
+                break
+            all_results.extend(items)
+            if len(items) < page_size:
+                break
+            offset += page_size
 
-        job["qualified_count"] = len(job["results"])
+        job["total_scanned"] = len(all_results)
 
-        # Check for next page
-        next_max_id = body.get("next_max_id")
-        if not next_max_id:
-            break
-        max_id = next_max_id
+        # Filter by min_followers
+        qualified = [
+            {
+                "username": item.get("username", ""),
+                "full_name": item.get("fullName", ""),
+                "follower_count": item.get("followersCount", 0),
+                "following_count": item.get("followingCount", 0),
+                "is_verified": item.get("isVerified", False),
+                "is_private": item.get("isPrivate", False),
+                "biography": item.get("biography", ""),
+                "external_url": item.get("externalUrl", ""),
+                "profile_url": f"https://instagram.com/{item.get('username', '')}",
+            }
+            for item in all_results
+            if item.get("followersCount", 0) >= min_followers
+        ]
 
-        # Polite delay to avoid rate limiting
-        time.sleep(1.2)
+        qualified.sort(key=lambda x: x["follower_count"], reverse=True)
+        job["results"] = qualified
+        job["qualified_count"] = len(qualified)
+        job["status"] = "complete"
+        job["finished_at"] = datetime.utcnow().isoformat()
 
-    job["status"] = "complete"
-    job["finished_at"] = datetime.utcnow().isoformat()
-    # Sort results by follower count descending
-    job["results"].sort(key=lambda x: x["follower_count"], reverse=True)
+    except Exception as e:
+        job["status"] = "error"
+        job["error_message"] = f"Failed to fetch results: {e}"
 
 
 @app.route("/")
 def index():
-    return render_template("index.html", jobs=jobs, default_api_key=ROCKETAPI_KEY)
+    return render_template("index.html", jobs=jobs, default_api_key=APIFY_TOKEN)
 
 
 @app.route("/start", methods=["POST"])
 def start_scan():
-    api_key = request.form.get("api_key", "").strip()
+    token = request.form.get("api_key", "").strip()
     username = request.form.get("username", "trueclassic").strip().lstrip("@")
     min_followers_input = int(request.form.get("min_followers", MIN_FOLLOWERS))
+    results_limit = int(request.form.get("results_limit", 500000))
 
-    if not api_key:
-        return jsonify({"error": "API key required"}), 400
+    if not token:
+        return jsonify({"error": "Apify API token required"}), 400
 
     job_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     jobs[job_id] = {
         "id": job_id,
         "username": username,
         "min_followers": min_followers_input,
+        "results_limit": results_limit,
         "status": "starting",
         "results": [],
         "total_scanned": 0,
         "qualified_count": 0,
-        "pages": 0,
         "errors": 0,
         "created_at": datetime.utcnow().isoformat(),
     }
 
-    def run():
-        try:
-            # Resolve user ID if not using default TC
-            if username.lower() == "trueclassic":
-                uid = TC_INSTAGRAM_USER_ID
-            else:
-                uid = get_user_id(username, api_key)
-            jobs[job_id]["user_id"] = uid
-            scrape_followers(job_id, uid, api_key, min_followers_input)
-        except Exception as e:
-            jobs[job_id]["status"] = "error"
-            jobs[job_id]["error_message"] = str(e)
-
-    t = threading.Thread(target=run, daemon=True)
+    t = threading.Thread(
+        target=run_apify_scan,
+        args=(job_id, username, results_limit, min_followers_input, token),
+        daemon=True,
+    )
     t.start()
     return redirect(url_for("job_status", job_id=job_id))
 
@@ -196,15 +196,15 @@ def job_status_json(job_id):
     job = jobs.get(job_id)
     if not job:
         return jsonify({"error": "not found"}), 404
-    # Return summary without full results list for polling
     return jsonify({
         "id": job["id"],
         "status": job["status"],
+        "apify_status": job.get("apify_status", ""),
         "total_scanned": job["total_scanned"],
         "qualified_count": job["qualified_count"],
-        "pages": job["pages"],
         "errors": job.get("errors", 0),
         "last_error": job.get("last_error", ""),
+        "apify_url": job.get("apify_url", ""),
     })
 
 
@@ -233,7 +233,7 @@ def download_csv(job_id):
     return Response(
         output.getvalue(),
         mimetype="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
 
