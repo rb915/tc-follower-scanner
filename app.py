@@ -12,7 +12,7 @@ app = Flask(__name__)
 
 APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "")
 MIN_FOLLOWERS = int(os.environ.get("MIN_FOLLOWERS", "100000"))
-ACTOR_ID = "apify~instagram-follower-scraper"
+ACTOR_ID = "ifsouRI46iY8Aabgi"  # apify instagram-follower-scraper
 
 # In-memory job store
 jobs = {}
@@ -117,22 +117,25 @@ def run_apify_scan(job_id: str, username: str, results_limit: int, min_followers
 
         job["total_scanned"] = len(all_results)
 
-        # Filter by min_followers
-        qualified = [
-            {
+        # Map fields from this actor's output format
+        # Note: this actor returns follower list but NOT each follower's follower count
+        # Filter only applies if followersCount is present
+        qualified = []
+        for item in all_results:
+            fc = item.get("followersCount") or item.get("follower_count") or 0
+            if min_followers > 0 and fc > 0 and fc < min_followers:
+                continue
+            qualified.append({
                 "username": item.get("username", ""),
-                "full_name": item.get("fullName", ""),
-                "follower_count": item.get("followersCount", 0),
-                "following_count": item.get("followingCount", 0),
-                "is_verified": item.get("isVerified", False),
-                "is_private": item.get("isPrivate", False),
-                "biography": item.get("biography", ""),
-                "external_url": item.get("externalUrl", ""),
+                "full_name": item.get("full_name", "") or item.get("fullName", ""),
+                "follower_count": fc,
+                "following_count": item.get("followingCount", 0) or item.get("following_count", 0),
+                "is_verified": item.get("is_verified", False) or item.get("isVerified", False),
+                "is_private": item.get("is_private", False) or item.get("isPrivate", False),
+                "biography": item.get("biography", "") or item.get("bio", ""),
+                "external_url": item.get("external_url", "") or item.get("externalUrl", ""),
                 "profile_url": f"https://instagram.com/{item.get('username', '')}",
-            }
-            for item in all_results
-            if item.get("followersCount", 0) >= min_followers
-        ]
+            })
 
         qualified.sort(key=lambda x: x["follower_count"], reverse=True)
         job["results"] = qualified
