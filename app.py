@@ -27,7 +27,13 @@ def get_user_id(username: str, api_key: str) -> str:
     )
     resp.raise_for_status()
     data = resp.json()
-    return str(data["response"]["body"]["data"]["user"]["id"])
+    response = data.get("response", {})
+    if not isinstance(response, dict):
+        raise ValueError(f"Unexpected response: {str(response)[:200]}")
+    body = response.get("body", {})
+    if not isinstance(body, dict):
+        raise ValueError(f"Unexpected body: {str(body)[:200]}")
+    return str(body["data"]["user"]["id"])
 
 
 def scrape_followers(job_id: str, user_id: str, api_key: str, min_followers: int):
@@ -73,8 +79,21 @@ def scrape_followers(job_id: str, user_id: str, api_key: str, min_followers: int
             time.sleep(5)
             continue
 
-        body = data.get("response", {}).get("body", {})
+        response = data.get("response", {})
+        if not isinstance(response, dict):
+            job["errors"] += 1
+            job["last_error"] = f"Unexpected response format: {str(response)[:200]}"
+            time.sleep(5)
+            continue
+        body = response.get("body", {})
+        if not isinstance(body, dict):
+            job["errors"] += 1
+            job["last_error"] = f"Unexpected body format: {str(body)[:200]}"
+            time.sleep(5)
+            continue
         users = body.get("users", [])
+        if not isinstance(users, list):
+            users = []
 
         if not users:
             break
