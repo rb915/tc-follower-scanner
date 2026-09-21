@@ -71,7 +71,11 @@ def scrape_followers(job_id: str, user_id: str, api_key: str, min_followers: int
         except Exception as e:
             job["errors"] += 1
             consecutive_errors += 1
-            job["last_error"] = str(e)
+            try:
+                raw = resp.text[:300]
+            except Exception:
+                raw = "(no response)"
+            job["last_error"] = f"{e} | raw: {raw}"
             if consecutive_errors >= 5:
                 job["status"] = "error"
                 job["error_message"] = f"Too many consecutive errors: {e}"
