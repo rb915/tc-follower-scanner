@@ -118,18 +118,16 @@ def run_apify_scan(job_id: str, username: str, results_limit: int, min_followers
         job["total_scanned"] = len(all_results)
 
         # Map fields from this actor's output format
-        # Note: this actor returns follower list but NOT each follower's follower count
-        # Filter only applies if followersCount is present
         qualified = []
+        verified_only = jobs[job_id].get("verified_only", False)
         for item in all_results:
-            fc = item.get("followersCount") or item.get("follower_count") or 0
-            if min_followers > 0 and fc > 0 and fc < min_followers:
+            if verified_only and not (item.get("is_verified", False) or item.get("isVerified", False)):
                 continue
             qualified.append({
                 "username": item.get("username", ""),
                 "full_name": item.get("full_name", "") or item.get("fullName", ""),
-                "follower_count": fc,
-                "following_count": item.get("followingCount", 0) or item.get("following_count", 0),
+                "follower_count": 0,
+                "following_count": 0,
                 "is_verified": item.get("is_verified", False) or item.get("isVerified", False),
                 "is_private": item.get("is_private", False) or item.get("isPrivate", False),
                 "biography": item.get("biography", "") or item.get("bio", ""),
@@ -157,8 +155,8 @@ def index():
 def start_scan():
     token = request.form.get("api_key", "").strip()
     username = request.form.get("username", "trueclassic").strip().lstrip("@")
-    min_followers_input = int(request.form.get("min_followers", MIN_FOLLOWERS))
-    results_limit = int(request.form.get("results_limit", 500000))
+    results_limit = int(request.form.get("results_limit", 100000))
+    verified_only = request.form.get("verified_only") == "on"
 
     if not token:
         return jsonify({"error": "Apify API token required"}), 400
@@ -167,7 +165,8 @@ def start_scan():
     jobs[job_id] = {
         "id": job_id,
         "username": username,
-        "min_followers": min_followers_input,
+        "min_followers": 0,
+        "verified_only": verified_only,
         "results_limit": results_limit,
         "status": "starting",
         "results": [],
@@ -179,7 +178,7 @@ def start_scan():
 
     t = threading.Thread(
         target=run_apify_scan,
-        args=(job_id, username, results_limit, min_followers_input, token),
+        args=(job_id, username, results_limit, 0, token),
         daemon=True,
     )
     t.start()

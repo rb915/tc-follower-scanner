@@ -62,14 +62,14 @@
   <div>
     <a class="back" href="/">← Back</a>
     <h1>@{{ job.username }} <span style="color:#555; font-weight:400; font-size:18px;">scan</span></h1>
-    <div class="sub">Min {{ '{:,}'.format(job.min_followers) }} followers · Job {{ job.id }}</div>
+    <div class="sub">Job {{ job.id }}{% if job.verified_only %} · Verified only{% endif %}</div>
   </div>
 </div>
 
 <div class="stats">
   <div class="stat">
     <div class="stat-val green">{{ '{:,}'.format(job.qualified_count) }}</div>
-    <div class="stat-label">Qualified (100k+)</div>
+    <div class="stat-label">Results</div>
   </div>
   <div class="stat">
     <div class="stat-val blue">{{ '{:,}'.format(job.total_scanned) }}</div>
@@ -118,8 +118,7 @@
       <th>#</th>
       <th>Account</th>
       <th>Name</th>
-      <th>Followers</th>
-      <th>Following</th>
+      <th>Status</th>
       <th>Bio</th>
     </tr>
   </thead>
@@ -133,8 +132,7 @@
         {% if r.is_private %}<span style="color:#555; font-size:11px;"> 🔒</span>{% endif %}
       </td>
       <td class="name">{{ r.full_name }}</td>
-      <td class="followers">{{ '{:,}'.format(r.follower_count) }}</td>
-      <td style="color:#666">{{ '{:,}'.format(r.following_count) }}</td>
+      <td style="font-size:12px; color:#555;">{% if r.is_private %}Private{% else %}Public{% endif %}</td>
       <td class="bio">{{ r.biography }}</td>
     </tr>
     {% endfor %}
